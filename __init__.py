@@ -3,11 +3,16 @@ import logging
 from time import gmtime, strftime
 from twython import TwythonStreamer, Twython
 
+#import sys
+#sys.path.append('/usr/smarthome/plugins/twitter/pycharm-debug-py3k.egg')
+#import pydevd
+
 logger = logging.getLogger('')
 
 
 class Twitter:
 
+    list_mode = ['_toggle_', '_strict_', '_default_value_']
     list_true = ['ein', 'ja', 'eins', '1', 'yes', 'yeah', 'jepp', 'on', 'jo']
     list_false = ['aus', 'off', 'null', 'no', 'nein', 'nope', '0']
 
@@ -29,22 +34,36 @@ class Twitter:
         self.alive = False
         self.twitter_thread.join()
 
+    def add_cmd(self, cmd, mode, default_value, item):
+        cmd = cmd.lower()
+        mode = mode.lower()
+
+        if not cmd in self._val:
+            self._val[cmd] = {'items': [item, mode, default_value], 'logics': [] }
+        else:
+            if not item in self._val[cmd]['items']:
+                self._val[cmd]['items'].append(item, mode, default_value)
+
     def parse_item(self, item):
         if 'twitter_recv' in item.conf:
-
             logger.debug("parse item: {0}".format(item))
-            cmd = item.conf['twitter_recv'].lower()
+            line = item.conf['twitter_recv']
+            line = line.split(',')
 
-            if cmd is None:
-                return None
-
-            logger.debug("twitter: {} receives updates by {}".format(item, cmd))
-
-            if not cmd in self._val:
-                self._val[cmd] = {'items': [item], 'logics': []}
-            else:
-                if not item in self._val[cmd]['items']:
-                    self._val[cmd]['items'].append(item)
+            if line:
+                for cmd_dict in line:
+                    cmd = cmd_dict.split(':')
+                    if cmd:
+                        if len(cmd) > 1:
+                            if cmd[1] in self.list_mode:
+                                self.add_cmd(cmd[0], cmd[1], None, item)
+                            else:
+                                if cmd[1]:
+                                    self.add_cmd(cmd[0], '_default_value_', cmd[1], item)
+                                else:
+                                    self.add_cmd(cmd[0], '_strict_', None, item)
+                        else:
+                            self.add_cmd(cmd[0], '_strict_', None, item)
 
             return self.update_item
         else:
@@ -64,24 +83,38 @@ class Twitter:
     def update_items_with_data(self, data):
 
         #trim the last occurence of '/': everything right-hand-side is our value
-        cmd = data.rsplit(' ', 1)
+        for cmd, values in self._val.items():
+            if data.startswith(cmd):
+                item = values['items'][0]
+                mode = values['items'][1]
+                default_value = values['items'][2]
 
-        if len(cmd) < 2:
-            logger.warning("unknown command '%s'" % data)
-            return
+                #passed values in command?
+                value = data.lstrip(cmd)
 
-        logger.debug(cmd[0])
-        logger.debug(cmd[1])
+                if not value:
+                    #no value passed, choose value by mode
+                    if mode == '_strict_':
+                        #no value in strict mode --> do nothing
+                        pass
+                    if mode == '_default_value_':
+                        #default_value mide --> use default value
+                        if default_value:
+                            value = default_value
+                    if mode == '_toggle_':
+                        #toggle mode, toggle current item value (if bool value)
+                        if isinstance(item(), bool):
+                            value = not item()
+                else:
+                    value = value.strip()
 
-        if cmd[0] in self._val:
-            for item in self._val[cmd[0]]['items']:
-                if isinstance(item(), bool):
-                    if cmd[1] in self.list_true:
-                        cmd[1] = 1
-                    if cmd[1] in self.list_false:
-                        cmd[1] = 0
-                logger.debug("data: {}".format(cmd[1]))
-                item(cmd[1], 'Twitter', '')
+                if value is not None:
+                    if isinstance(item(), bool):
+                        if value in self.list_true:
+                            value = 1
+                        if value in self.list_false:
+                            value = 0
+                    item(value, 'Twitter', '')
 
 class TwitterStreamer(TwythonStreamer):
     def __init__(self, plugin, app_key, app_secret, oauth_token, oauth_token_secret):
@@ -95,7 +128,7 @@ class TwitterStreamer(TwythonStreamer):
 
     def on_success(self, data):
         if 'text' in data:
-            item_data = "tweet %s" % data['text'].lower()
+            item_data = data['text'].lower()
             self.plugin.update_items_with_data(item_data)
             self.twitter_api.destroy_status(id=data['id'])
 
