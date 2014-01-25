@@ -1,7 +1,7 @@
 import threading
 import logging
 from time import gmtime, strftime
-from twython import TwythonStreamer
+from twython import TwythonStreamer, Twython
 
 logger = logging.getLogger('')
 
@@ -90,14 +90,14 @@ class TwitterStreamer(TwythonStreamer):
         self.app_secret = app_secret
         self.oauth_token = oauth_token
         self.oauth_token_secret = oauth_token_secret
-
         TwythonStreamer.__init__(self, self.app_key, self.app_secret, self.oauth_token, self.oauth_token_secret)
+        self.twitter_api = Twython(self.app_key, self.app_secret, self.oauth_token, self.oauth_token_secret)
 
     def on_success(self, data):
         if 'text' in data:
-            data = "tweet %s" % data['text'].lower()
-            logger.debug(data)
-            self.plugin.update_items_with_data(data)
+            item_data = "tweet %s" % data['text'].lower()
+            self.plugin.update_items_with_data(item_data)
+            self.twitter_api.destroy_status(id=data['id'])
 
     def on_error(self, status_code, data):
         print(status_code)
